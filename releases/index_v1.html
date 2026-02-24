@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cosmic Dodge</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #0a0a12;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      color: #e0e0e0;
+    }
+    h1 {
+      font-size: 1.75rem;
+      margin-bottom: 0.5rem;
+      letter-spacing: 0.15em;
+      color: #7dd3fc;
+    }
+    .subtitle {
+      font-size: 0.85rem;
+      opacity: 0.8;
+      margin-bottom: 1rem;
+    }
+    #gameContainer {
+      position: relative;
+      border: 2px solid #334155;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 0 40px rgba(125, 211, 252, 0.15);
+    }
+    #gameCanvas {
+      display: block;
+      background: radial-gradient(ellipse at 50% 100%, #1e293b 0%, #0f172a 50%, #020617 100%);
+      cursor: none;
+    }
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 600px;
+      padding: 0.5rem 0;
+      font-size: 0.9rem;
+    }
+    .hud span { color: #94a3b8; }
+    .hud strong { color: #f8fafc; }
+    #startScreen, #gameOverScreen {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(2, 6, 23, 0.92);
+      gap: 1rem;
+    }
+    #gameOverScreen { display: none; }
+    #startScreen p, #gameOverScreen p {
+      font-size: 0.95rem;
+      max-width: 320px;
+      text-align: center;
+      line-height: 1.5;
+      color: #94a3b8;
+    }
+    .btn {
+      padding: 0.6rem 1.5rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 6px;
+      background: #0ea5e9;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+    .btn:hover { background: #38bdf8; }
+    .btn:focus { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+    #finalScore { font-size: 1.5rem; color: #7dd3fc; }
+  </style>
+</head>
+<body>
+  <h1>COSMIC DODGE</h1>
+  <p class="subtitle">Dodge asteroids. Don't get hit.</p>
+  <div id="gameContainer">
+    <canvas id="gameCanvas" width="600" height="400" tabindex="0"></canvas>
+    <div id="startScreen">
+      <p>Use <strong>Arrow Left / Right</strong> or <strong>A / D</strong> to move.<br>Survive as long as you can.</p>
+      <button class="btn" id="startBtn">Start Game</button>
+    </div>
+    <div id="gameOverScreen">
+      <p>Game Over</p>
+      <p id="finalScore">Score: 0</p>
+      <button class="btn" id="restartBtn">Play Again</button>
+    </div>
+  </div>
+  <div class="hud">
+    <span>Score: <strong id="scoreEl">0</strong></span>
+    <span>Lives: <strong id="livesEl">3</strong></span>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+      const startScreen = document.getElementById('startScreen');
+      const gameOverScreen = document.getElementById('gameOverScreen');
+      const startBtn = document.getElementById('startBtn');
+      const restartBtn = document.getElementById('restartBtn');
+      const scoreEl = document.getElementById('scoreEl');
+      const livesEl = document.getElementById('livesEl');
+      const finalScoreEl = document.getElementById('finalScore');
+
+      const PLAYER_WIDTH = 40;
+      const PLAYER_HEIGHT = 24;
+      const PLAYER_SPEED = 5;
+      const ASTEROID_MIN_R = 12;
+      const ASTEROID_MAX_R = 28;
+      const ASTEROID_SPEED_BASE = 1.2;
+      const SPAWN_INTERVAL_MS_INITIAL = 1400;
+      const SPAWN_INTERVAL_MS_MIN = 550;
+      const INITIAL_LIVES = 3;
+
+      let gameState = 'start'; // 'start' | 'playing' | 'gameover'
+      let playerX = 0;
+      let lastTime = 0;
+      let spawnAccum = 0;
+      let asteroids = [];
+      let score = 0;
+      let lives = INITIAL_LIVES;
+      let animationId = null;
+      let gameTimeMs = 0;
+
+      function clamp(value, minVal, maxVal) {
+        return Math.max(minVal, Math.min(maxVal, value));
+      }
+
+      function initGame() {
+        playerX = canvas.width / 2 - PLAYER_WIDTH / 2;
+        asteroids = [];
+        score = 0;
+        lives = INITIAL_LIVES;
+        spawnAccum = 0;
+        gameTimeMs = 0;
+        gameState = 'playing';
+        startScreen.style.display = 'none';
+        gameOverScreen.style.display = 'none';
+        scoreEl.textContent = '0';
+        livesEl.textContent = String(INITIAL_LIVES);
+      }
+
+      function spawnAsteroid() {
+        const radius = ASTEROID_MIN_R + Math.random() * (ASTEROID_MAX_R - ASTEROID_MIN_R);
+        const x = radius + Math.random() * (canvas.width - 2 * radius);
+        const speed = ASTEROID_SPEED_BASE + Math.random() * 0.8;
+        asteroids.push({ x, y: -radius, radius, speed });
+      }
+
+      function rectCircleCollide(rectX, rectY, rectW, rectH, circleX, circleY, circleR) {
+        const closestX = clamp(circleX, rectX, rectX + rectW);
+        const closestY = clamp(circleY, rectY, rectY + rectH);
+        const dx = circleX - closestX;
+        const dy = circleY - closestY;
+        return dx * dx + dy * dy <= circleR * circleR;
+      }
+
+      function update(deltaMs) {
+        if (gameState !== 'playing') return;
+
+        const move = { left: false, right: false };
+        if (keysDown['ArrowLeft'] || keysDown['a'] || keysDown['A']) move.left = true;
+        if (keysDown['ArrowRight'] || keysDown['d'] || keysDown['D']) move.right = true;
+        if (move.left) playerX -= PLAYER_SPEED;
+        if (move.right) playerX += PLAYER_SPEED;
+        playerX = clamp(playerX, 0, canvas.width - PLAYER_WIDTH);
+
+        gameTimeMs += deltaMs;
+        const spawnInterval = Math.max(SPAWN_INTERVAL_MS_MIN,
+          SPAWN_INTERVAL_MS_INITIAL - gameTimeMs * 0.04);
+        spawnAccum += deltaMs;
+        while (spawnAccum >= spawnInterval) {
+          spawnAsteroid();
+          spawnAccum -= spawnInterval;
+        }
+
+        const playerY = canvas.height - PLAYER_HEIGHT - 20;
+        for (let i = asteroids.length - 1; i >= 0; i--) {
+          const ast = asteroids[i];
+          ast.y += ast.speed;
+          if (ast.y - ast.radius > canvas.height) {
+            asteroids.splice(i, 1);
+            score += 10;
+            continue;
+          }
+          if (rectCircleCollide(playerX, playerY, PLAYER_WIDTH, PLAYER_HEIGHT, ast.x, ast.y, ast.radius)) {
+            asteroids.splice(i, 1);
+            lives--;
+            livesEl.textContent = String(lives);
+            if (lives <= 0) {
+              gameState = 'gameover';
+              finalScoreEl.textContent = 'Score: ' + score;
+              gameOverScreen.style.display = 'flex';
+            }
+          }
+        }
+
+        score += Math.floor((deltaMs / 1000) * 5);
+        scoreEl.textContent = String(score);
+      }
+
+      function draw() {
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const playerY = canvas.height - PLAYER_HEIGHT - 20;
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.moveTo(playerX + PLAYER_WIDTH / 2, playerY);
+        ctx.lineTo(playerX + PLAYER_WIDTH, playerY + PLAYER_HEIGHT);
+        ctx.lineTo(playerX + PLAYER_WIDTH / 2, playerY + PLAYER_HEIGHT - 4);
+        ctx.lineTo(playerX, playerY + PLAYER_HEIGHT);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#7dd3fc';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.fillStyle = '#64748b';
+        for (let i = 0; i < asteroids.length; i++) {
+          const ast = asteroids[i];
+          ctx.beginPath();
+          ctx.arc(ast.x, ast.y, ast.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#475569';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      const keysDown = {};
+      function onKeyDown(event) {
+        keysDown[event.key] = true;
+        if (gameState === 'start' && (event.key === ' ' || event.key === 'Enter')) {
+          event.preventDefault();
+          startBtn.click();
+        }
+        if (gameState === 'gameover' && (event.key === ' ' || event.key === 'Enter')) {
+          event.preventDefault();
+          restartBtn.click();
+        }
+      }
+      function onKeyUp(event) {
+        keysDown[event.key] = false;
+      }
+
+      function gameLoop(timestamp) {
+        const deltaMs = lastTime ? timestamp - lastTime : 16;
+        lastTime = timestamp;
+        update(deltaMs);
+        draw();
+        animationId = requestAnimationFrame(gameLoop);
+      }
+
+      startBtn.addEventListener('click', function () {
+        initGame();
+        lastTime = 0;
+        if (animationId !== null) cancelAnimationFrame(animationId);
+        animationId = requestAnimationFrame(gameLoop);
+      });
+
+      restartBtn.addEventListener('click', function () {
+        initGame();
+        lastTime = 0;
+        if (animationId !== null) cancelAnimationFrame(animationId);
+        animationId = requestAnimationFrame(gameLoop);
+      });
+
+      canvas.setAttribute('tabindex', '0');
+      canvas.focus();
+      document.addEventListener('keydown', onKeyDown);
+      document.addEventListener('keyup', onKeyUp);
+      canvas.addEventListener('click', function () {
+        if (gameState === 'start') startBtn.click();
+      });
+    })();
+  </script>
+</body>
+</html>
